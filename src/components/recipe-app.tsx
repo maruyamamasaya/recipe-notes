@@ -1,40 +1,63 @@
 "use client";
 
 import Image from "next/image";
-import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
-import { createRecipeRepository } from "@/lib/recipes/supabase-repository";
+import { ChangeEvent, FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { createRecipeRepository, RecipeRepositoryError } from "@/lib/recipes/supabase-repository";
 import type { Recipe, RecipeRepository } from "@/lib/recipes/types";
 
 const emptyIngredient = () => ({ name: "", amount: "", unit: "g" });
 const emptyStep = () => ({ text: "", image: "" });
+const IMAGE_TIMEOUT_MS = 15_000;
+const MAX_IMAGE_PIXELS = 40_000_000;
 
 async function compressImage(file: File): Promise<string> {
-  const bitmap = await createImageBitmap(file);
-  const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
-  const canvas = document.createElement("canvas");
-  canvas.width = Math.round(bitmap.width * scale);
-  canvas.height = Math.round(bitmap.height * scale);
-  canvas.getContext("2d")?.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-  let quality = 0.86;
-  let blob: Blob | null = null;
-  do {
-    blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
-    quality -= 0.12;
-  } while (blob && blob.size > 500_000 && quality >= 0.26);
-  if (!blob) throw new Error("画像を処理できませんでした");
-  return await new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
-  });
+  if (!file.type.startsWith("image/")) throw new Error("対応していないファイル形式です。");
+  let bitmap: ImageBitmap | undefined;
+  try {
+    bitmap = await createImageBitmap(file);
+    if (!bitmap.width || !bitmap.height || bitmap.width * bitmap.height > MAX_IMAGE_PIXELS) {
+      throw new Error("画像のサイズが大きすぎます。");
+    }
+    const scale = Math.min(1, 1600 / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) throw new Error("画像処理を開始できませんでした。");
+    context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    let quality = 0.86;
+    let blob: Blob | null = null;
+    do {
+      blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/jpeg", quality));
+      quality -= 0.12;
+    } while (blob && blob.size > 500_000 && quality >= 0.26);
+    if (!blob) throw new Error("画像をJPEGへ変換できませんでした。");
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => typeof reader.result === "string" ? resolve(reader.result) : reject(new Error("画像を読み込めませんでした。"));
+      reader.onerror = () => reject(reader.error ?? new Error("画像を読み込めませんでした。"));
+      reader.onabort = () => reject(new Error("画像の読み込みをキャンセルしました。"));
+      reader.readAsDataURL(blob);
+    });
+  } finally {
+    bitmap?.close();
+  }
+}
+
+function loadErrorMessage(error: unknown) {
+  if (!(error instanceof RecipeRepositoryError)) return "レシピを読み込めませんでした。時間をおいて再度お試しください。";
+  if (error.code === "configuration") return "Supabaseの接続設定がありません。管理者に環境変数の確認を依頼してください。";
+  if (error.code === "anonymous-auth-disabled") return "匿名認証が無効です。管理者にAnonymous Sign-Inの設定確認を依頼してください。";
+  if (error.code === "migration-missing") return "データベースの準備が完了していません。管理者にMigrationの適用確認を依頼してください。";
+  if (error.code === "permission-denied") return "データベースの権限設定が不足しています。管理者にData API・GRANT・RLSの確認を依頼してください。";
+  return "Supabaseに接続できませんでした。通信状況を確認して再読み込みしてください。";
 }
 
 export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const dataSource = useMemo<RecipeRepository>(() => {
     if (repository) return repository;
     try { return createRecipeRepository(); }
-    catch { return { list: async () => { throw new Error("Supabase is not configured"); }, create: async () => { throw new Error("Supabase is not configured"); } }; }
+    catch (error) { return { list: async () => { throw error; }, create: async () => { throw error; } }; }
   }, [repository]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [total, setTotal] = useState(0);
@@ -49,44 +72,87 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const [image, setImage] = useState("");
   const [ingredients, setIngredients] = useState([emptyIngredient()]);
   const [steps, setSteps] = useState([emptyStep()]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [imageBusy, setImageBusy] = useState(false);
-  const [error, setError] = useState("");
+  const [loadingRecipes, setLoadingRecipes] = useState(true);
+  const [savingRecipe, setSavingRecipe] = useState(false);
+  const [processingImage, setProcessingImage] = useState(false);
+  const [loadError, setLoadError] = useState("");
+  const [formError, setFormError] = useState("");
+  const [imageError, setImageError] = useState("");
+  const [reloadKey, setReloadKey] = useState(0);
+  const imageOperation = useRef(0);
   const filterTags = ["すべて", "朝ごはん", "主菜", "パスタ", "ごはん", "野菜", "おやつ"];
   const pageCount = Math.max(1, Math.ceil(total / 9));
 
   useEffect(() => {
     let active = true;
-    setLoading(true); setError("");
+    setLoadingRecipes(true); setLoadError("");
     const timer = window.setTimeout(() => {
       dataSource.list({ query, category: activeTag, page }).then((result) => {
         if (active) { setRecipes(result.recipes); setTotal(result.total); }
-      }).catch(() => active && setError("レシピを読み込めませんでした。時間をおいて再度お試しください。"))
-        .finally(() => active && setLoading(false));
+      }).catch((error) => {
+        if (process.env.NODE_ENV !== "production") console.error("Failed to load recipes", error);
+        if (active) setLoadError(loadErrorMessage(error));
+      }).finally(() => active && setLoadingRecipes(false));
       const params = new URLSearchParams();
       if (query) params.set("q", query); if (activeTag !== "すべて") params.set("category", activeTag); if (page > 1) params.set("page", String(page));
       window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
     }, 200);
     return () => { active = false; window.clearTimeout(timer); };
-  }, [activeTag, dataSource, page, query]);
+  }, [activeTag, dataSource, page, query, reloadKey]);
 
   const loadImage = async (event: ChangeEvent<HTMLInputElement>, onLoad: (url: string) => void) => {
     const file = event.target.files?.[0];
-    if (file) try { setImageBusy(true); onLoad(await compressImage(file)); } catch { setError("画像を処理できませんでした。別の画像をお試しください。"); } finally { setImageBusy(false); }
+    event.target.value = "";
+    if (!file) return;
+    const operation = ++imageOperation.current;
+    setProcessingImage(true); setImageError("");
+    let timeoutId = 0;
+    try {
+      const timeout = new Promise<never>((_, reject) => {
+        timeoutId = window.setTimeout(() => reject(new Error("画像処理がタイムアウトしました。")), IMAGE_TIMEOUT_MS);
+      });
+      const url = await Promise.race([compressImage(file), timeout]);
+      if (imageOperation.current === operation) onLoad(url);
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") console.error("Failed to process image", error);
+      if (imageOperation.current === operation) setImageError(error instanceof Error ? error.message : "画像を処理できませんでした。別の画像をお試しください。");
+    } finally {
+      window.clearTimeout(timeoutId);
+      if (imageOperation.current === operation) setProcessingImage(false);
+    }
   };
+
+  const cancelImageProcessing = () => {
+    imageOperation.current += 1;
+    setProcessingImage(false);
+    setImageError("画像処理をキャンセルしました。同じ画像を再選択できます。");
+  };
+
+  const hasIngredients = ingredients.some((item) => item.name.trim() && item.amount !== "");
+  const hasSteps = steps.some((step) => step.text.trim());
+  const canSubmit = !savingRecipe && !processingImage && title.trim() !== "" && image !== "" && hasIngredients && hasSteps;
+  const submitHint = processingImage ? "画像処理の完了後に保存できます。" : !title.trim() ? "レシピ名を入力してください。" : !image ? "完成写真を選択してください。" : !hasIngredients ? "材料を入力してください。" : !hasSteps ? "作り方を入力してください。" : "";
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
+    if (!image) { setImageError("完成写真を選択してください。"); return; }
     const cleanIngredients = ingredients.filter((item) => item.name.trim());
     const cleanSteps = steps.filter((step) => step.text.trim());
-    setSaving(true); setError("");
+    setSavingRecipe(true); setFormError("");
     try {
       await dataSource.create({ title: title.trim(), description: description.trim(), category, coverImage: image, tags: tags.split(/[、,\s]+/).filter(Boolean), ingredients: cleanIngredients, steps: cleanSteps });
       setTitle(""); setDescription(""); setTags(""); setImage(""); setIngredients([emptyIngredient()]); setSteps([emptyStep()]); setFormOpen(false); setPage(1);
-      const result = await dataSource.list({ query, category: activeTag, page: 1 }); setRecipes(result.recipes); setTotal(result.total);
-    } catch { setError("レシピを保存できませんでした。入力内容と通信状況をご確認ください。"); }
-    finally { setSaving(false); }
+      try {
+        const result = await dataSource.list({ query, category: activeTag, page: 1 });
+        setRecipes(result.recipes); setTotal(result.total); setLoadError("");
+      } catch (error) {
+        if (process.env.NODE_ENV !== "production") console.error("Failed to reload recipes after save", error);
+        setLoadError(loadErrorMessage(error));
+      }
+    } catch (error) {
+      if (process.env.NODE_ENV !== "production") console.error("Failed to save recipe", error);
+      setFormError("レシピを保存できませんでした。入力内容と通信状況をご確認ください。");
+    } finally { setSavingRecipe(false); }
   };
 
   return <>
@@ -111,8 +177,8 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
           <div className="filter" id="categories">{filterTags.map((tag) => <button key={tag} className={activeTag === tag ? "selected" : ""} onClick={() => { setActiveTag(tag); setPage(1); }}>{tag}</button>)}</div>
         </div>
 
-        {error && <div className="status error" role="alert">{error}</div>}
-        {loading ? <div className="status" role="status">レシピを読み込んでいます…</div> : recipes.length ? <div className="recipe-grid">{recipes.map((recipe, index) => <article className="recipe-card" key={recipe.id}>
+        {loadError && <div className="status error" role="alert"><p>{loadError}</p><button type="button" onClick={() => setReloadKey((value) => value + 1)}>再読み込み</button></div>}
+        {loadingRecipes ? <div className="status" role="status">レシピを読み込んでいます…</div> : recipes.length ? <div className="recipe-grid">{recipes.map((recipe, index) => <article className="recipe-card" key={recipe.id}>
           <div className="card-image">{recipe.image && <Image src={recipe.image} alt={`${recipe.title}の完成写真`} fill sizes="(max-width: 700px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized={recipe.image.startsWith("data:")} />}<span className="card-number">{String((page - 1) * 9 + index + 1).padStart(2, "0")}</span><span className="time">◷ {recipe.time}</span></div>
           <div className="card-body"><div className="tags">{recipe.tags.map((tag) => <button key={tag} onClick={() => { setQuery(tag); setPage(1); }}>#{tag}</button>)}</div><h3>{recipe.title}</h3><p>{recipe.description}</p><button className="detail">レシピを見る <span>→</span></button></div>
         </article>)}</div> : <div className="empty"><strong>レシピが見つかりませんでした</strong><p>検索ワードやカテゴリを変えてお試しください。</p></div>}
@@ -129,11 +195,14 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
         <label>ひとことメモ<textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="レシピの特徴や思い出を書いてください" /></label>
         <label>カテゴリ <span>必須</span><select value={category} onChange={(e) => setCategory(e.target.value)}>{filterTags.slice(1).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>タグ<input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="和食、作り置き（スペースや読点で区切る）" /></label>
-        <fieldset><legend>完成写真 <span>必須</span></legend><label className={`upload ${image ? "has-image" : ""}`}>{image ? <Image src={image} alt="完成写真のプレビュー" fill unoptimized /> : <><b>＋</b><strong>写真を選ぶ</strong><small>自動で約500KB以下に圧縮します</small></>}<input required={!image} type="file" accept="image/*" onChange={(e) => loadImage(e, setImage)} /></label></fieldset>
+        <fieldset><legend>完成写真 <span>必須</span></legend><label className={`upload ${image ? "has-image" : ""}`}>{image ? <Image src={image} alt="完成写真のプレビュー" fill unoptimized /> : <><b>＋</b><strong>写真を選ぶ</strong><small>自動で約500KB以下に圧縮します</small></>}<input type="file" accept="image/*" onChange={(e) => loadImage(e, setImage)} /></label></fieldset>
         <fieldset><div className="field-head"><legend>材料 <small>1人前</small></legend><button type="button" onClick={() => setIngredients((v) => [...v, emptyIngredient()])}>＋ 材料を追加</button></div>{ingredients.map((item, index) => <div className="ingredient-row" key={index}><input required placeholder="材料名" value={item.name} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, name: e.target.value } : x))}/><input required type="number" step="any" placeholder="数量" value={item.amount} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}/><select value={item.unit} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, unit: e.target.value } : x))}><option>g</option><option>ml</option><option>個</option><option>本</option><option>枚</option><option>大さじ</option><option>小さじ</option><option>適量</option></select><button type="button" aria-label={`材料${index + 1}を削除`} disabled={ingredients.length === 1} onClick={() => setIngredients((v) => v.filter((_, i) => i !== index))}>−</button></div>)}</fieldset>
         <fieldset><div className="field-head"><legend>作り方</legend><button type="button" onClick={() => setSteps((v) => [...v, emptyStep()])}>＋ 工程を追加</button></div>{steps.map((step, index) => <div className="step-row" key={index}><span>{index + 1}</span><textarea required value={step.text} onChange={(e) => setSteps((v) => v.map((x, i) => i === index ? { ...x, text: e.target.value } : x))} placeholder="工程を入力してください"/><label className="step-photo">{step.image ? "✓ 写真あり" : "▧ 写真"}<input type="file" accept="image/*" onChange={(e) => loadImage(e, (url) => setSteps((v) => v.map((x, i) => i === index ? { ...x, image: url } : x)))}/></label><button type="button" aria-label={`工程${index + 1}を削除`} disabled={steps.length === 1} onClick={() => setSteps((v) => v.filter((_, i) => i !== index))}>−</button></div>)}</fieldset>
-        {imageBusy && <div className="status" role="status">画像を圧縮しています…</div>}
-        <div className="form-actions"><button type="button" disabled={saving} onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" disabled={saving || imageBusy} type="submit">{saving ? "保存中…" : "レシピを保存する →"}</button></div>
+        {processingImage && <div className="status" role="status">画像を処理中… <button type="button" onClick={cancelImageProcessing}>画像処理をキャンセル</button></div>}
+        {imageError && <div className="status error" role="alert">画像エラー: {imageError}</div>}
+        {formError && <div className="status error" role="alert">保存エラー: {formError}</div>}
+        {submitHint && !imageError && <p className="submit-hint">{submitHint}</p>}
+        <div className="form-actions"><button type="button" disabled={savingRecipe} onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" disabled={!canSubmit} type="submit">{savingRecipe ? "保存中…" : processingImage ? "画像を処理中…" : "レシピを保存する →"}</button></div>
       </form>
     </section></div>}
   </>;
