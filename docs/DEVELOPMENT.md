@@ -11,7 +11,7 @@
 
 Next.js 16、Vercel、Supabase CLI の互換性を初期化時に公式情報で再確認する。major upgrade は自動適用せず、release note、migration guide、CI を確認する。
 
-## Planned Local Setup
+## Local Setup
 
 1. repository を clone する。
 2. Corepack を有効化し、pin 済み pnpm で `pnpm install --frozen-lockfile` を実行する。
@@ -50,7 +50,7 @@ Next.js 16、Vercel、Supabase CLI の互換性を初期化時に公式情報で
 
 E2E 採用後だけ `pnpm test:e2e` を追加する。format tool は初期化時に ESLint との責務重複を評価し、採用する場合は独立した `format:check` とする。
 
-## Database Workflow (planned)
+## Database Workflow
 
 Supabase CLI の stable version を devDependency または CI tool version として pin し、初期化時に実コマンドを検証する。想定する流れは以下。
 
@@ -79,4 +79,4 @@ remote DB を直接 dashboard で変更しない。緊急変更も migration に
 
 ## Current Implementation Status
 
-UI はブラウザ内の状態で動くプロトタイプである。Supabase 接続前のため、ページを再読み込みすると追加したレシピは失われる。永続化を実装する際に migration、RLS、Storage policy と integration test を同じ変更で追加する。
+`supabase/migrations/20260902000100_recipe_persistence.sql` を SQL Editor または CLI で適用し、Authentication > Providers で Anonymous Sign-ins を有効化する。Database / private Storage 永続化は実装済み。remote適用後のSecurity / Performance Advisorとowner/non-owner policy testはDashboardまたはlocal Supabase環境で確認する。

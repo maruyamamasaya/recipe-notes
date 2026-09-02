@@ -13,6 +13,7 @@ Accepted decision は上書きせず、変更時は新しい ID から supersede
 | DEC-003 | Server-first data access と RLS | 2026-09-02 | Accepted | None |
 | DEC-004 | pnpm 10 と Node.js 24 LTS | 2026-09-02 | Accepted | None |
 | DEC-005 | 最小 UI / validation / test stack | 2026-09-02 | Accepted | None |
+| DEC-006 | Anonymous Auth による暫定所有モデル | 2026-09-02 | Accepted | None |
 
 ## DEC-001: Next.js / Vercel の単一 Web application
 
@@ -136,3 +137,10 @@ Tailwind CSS 4 を styling 基盤とする。shadcn/ui は必要 component の�
 - shadcn/ui source は自分たちのコードとして review/update する。
 - library は「採用方針」と「今すぐ install」を区別し、用途が発生する PR で追加する。
 - coverage 数値だけでなく重要な boundary と failure path を優先する。
+
+## DEC-006: Anonymous Auth による暫定所有モデル
+
+- **Date:** 2026-09-02
+- **Status:** Accepted
+
+ログインUIなしで `anon` roleへ無条件writeを許可せず永続化するため、Supabase Anonymous Sign-insを使う。`recipes.user_id = auth.uid()` とStorage先頭folderを所有境界とし、service role / `SECURITY DEFINER` は使わない。再読み込みではsessionを維持できるが、browser data消去時の復旧・別端末同期はできない。正式Auth時にidentity linking、SSR cookie、Server-first readへ移行する。

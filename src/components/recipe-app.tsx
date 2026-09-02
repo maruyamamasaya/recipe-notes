@@ -1,31 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { ChangeEvent, FormEvent, useMemo, useState } from "react";
-
-type Recipe = {
-  id: string;
-  title: string;
-  description: string;
-  image: string;
-  time: string;
-  tags: string[];
-  ingredients: { name: string; amount: string; unit: string }[];
-  steps: { text: string; image?: string }[];
-};
-
-const seedRecipes: Recipe[] = [
-  { id: "1", title: "トマトとバジルのパスタ", description: "フレッシュトマトをたっぷり使った、シンプルな定番パスタ。", image: "https://images.unsplash.com/photo-1473093295043-cdd812d0e601?auto=format&fit=crop&w=900&q=82", time: "25分", tags: ["パスタ", "イタリアン"], ingredients: [{ name: "トマト", amount: "2", unit: "個" }], steps: [{ text: "パスタを茹で、ソースと和える" }] },
-  { id: "2", title: "ふわふわパンケーキ", description: "休日の朝に食べたい、しっとり軽やかなパンケーキ。", image: "https://images.unsplash.com/photo-1528207776546-365bb710ee93?auto=format&fit=crop&w=900&q=82", time: "20分", tags: ["朝ごはん", "スイーツ"], ingredients: [{ name: "小麦粉", amount: "100", unit: "g" }], steps: [{ text: "生地を混ぜて弱火で焼く" }] },
-  { id: "3", title: "彩り野菜のキーマカレー", description: "スパイス香る、野菜たっぷりのわが家の定番カレー。", image: "https://images.unsplash.com/photo-1603894584373-5ac82b2ae398?auto=format&fit=crop&w=900&q=82", time: "40分", tags: ["カレー", "作り置き"], ingredients: [{ name: "ひき肉", amount: "200", unit: "g" }], steps: [{ text: "具材を炒めて煮込む" }] },
-  { id: "4", title: "サーモンのハーブグリル", description: "香草とレモンが爽やか。オーブンにおまかせの一皿。", image: "https://images.unsplash.com/photo-1519708227418-c8fd9a32b7a2?auto=format&fit=crop&w=900&q=82", time: "30分", tags: ["魚料理", "洋食"], ingredients: [{ name: "サーモン", amount: "2", unit: "切れ" }], steps: [{ text: "ハーブをのせて焼く" }] },
-  { id: "5", title: "季節野菜のせいろ蒸し", description: "旬の甘みをそのまま味わう、からだにやさしい一品。", image: "https://images.unsplash.com/photo-1512621776951-a57141f2eefd?auto=format&fit=crop&w=900&q=82", time: "20分", tags: ["野菜", "ヘルシー"], ingredients: [{ name: "季節の野菜", amount: "300", unit: "g" }], steps: [{ text: "食べやすく切って蒸す" }] },
-  { id: "6", title: "鶏肉のクリーム煮", description: "やわらかい鶏肉と濃厚ソース。パンにもよく合います。", image: "https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?auto=format&fit=crop&w=900&q=82", time: "35分", tags: ["鶏肉", "煮込み"], ingredients: [{ name: "鶏もも肉", amount: "300", unit: "g" }], steps: [{ text: "鶏肉を焼き、クリームで煮る" }] },
-  { id: "7", title: "アボカドのオープンサンド", description: "サクサクのトーストにアボカドをたっぷり。", image: "https://images.unsplash.com/photo-1541519227354-08fa5d50c44d?auto=format&fit=crop&w=900&q=82", time: "10分", tags: ["朝ごはん", "パン"], ingredients: [{ name: "アボカド", amount: "1", unit: "個" }], steps: [{ text: "パンを焼いて具材をのせる" }] },
-  { id: "8", title: "ほうじ茶のシフォンケーキ", description: "ふわりと広がるほうじ茶の香り。甘さ控えめのおやつ。", image: "https://images.unsplash.com/photo-1578985545062-69928b1d9587?auto=format&fit=crop&w=900&q=82", time: "60分", tags: ["おやつ", "和スイーツ"], ingredients: [{ name: "卵", amount: "4", unit: "個" }], steps: [{ text: "メレンゲを合わせて焼く" }] },
-  { id: "9", title: "えびとレモンのリゾット", description: "えびの旨みとレモンの酸味を楽しむ、軽やかなリゾット。", image: "https://images.unsplash.com/photo-1476124369491-e7addf5db371?auto=format&fit=crop&w=900&q=82", time: "35分", tags: ["ごはん", "イタリアン"], ingredients: [{ name: "えび", amount: "8", unit: "尾" }], steps: [{ text: "米を炒め、スープで炊く" }] },
-  { id: "10", title: "豚肉と根菜の甘辛煮", description: "ごはんが進む、ほっとする味の煮物。", image: "https://images.unsplash.com/photo-1547592180-85f173990554?auto=format&fit=crop&w=900&q=82", time: "45分", tags: ["豚肉", "和食"], ingredients: [{ name: "豚肉", amount: "200", unit: "g" }], steps: [{ text: "材料を甘辛く煮る" }] },
-];
+import { ChangeEvent, FormEvent, useEffect, useMemo, useState } from "react";
+import { createRecipeRepository } from "@/lib/recipes/supabase-repository";
+import type { Recipe, RecipeRepository } from "@/lib/recipes/types";
 
 const emptyIngredient = () => ({ name: "", amount: "", unit: "g" });
 const emptyStep = () => ({ text: "", image: "" });
@@ -52,37 +30,63 @@ async function compressImage(file: File): Promise<string> {
   });
 }
 
-export function RecipeApp() {
-  const [recipes, setRecipes] = useState(seedRecipes);
+export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
+  const dataSource = useMemo<RecipeRepository>(() => {
+    if (repository) return repository;
+    try { return createRecipeRepository(); }
+    catch { return { list: async () => { throw new Error("Supabase is not configured"); }, create: async () => { throw new Error("Supabase is not configured"); } }; }
+  }, [repository]);
+  const [recipes, setRecipes] = useState<Recipe[]>([]);
+  const [total, setTotal] = useState(0);
   const [query, setQuery] = useState("");
   const [activeTag, setActiveTag] = useState("すべて");
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  const [category, setCategory] = useState("主菜");
   const [tags, setTags] = useState("");
   const [image, setImage] = useState("");
   const [ingredients, setIngredients] = useState([emptyIngredient()]);
   const [steps, setSteps] = useState([emptyStep()]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [imageBusy, setImageBusy] = useState(false);
+  const [error, setError] = useState("");
   const filterTags = ["すべて", "朝ごはん", "主菜", "パスタ", "ごはん", "野菜", "おやつ"];
-  const filtered = useMemo(() => recipes.filter((recipe) => {
-    const haystack = [recipe.title, recipe.description, ...recipe.tags, ...recipe.ingredients.map((item) => item.name)].join(" ").toLowerCase();
-    return haystack.includes(query.trim().toLowerCase()) && (activeTag === "すべて" || recipe.tags.includes(activeTag));
-  }), [recipes, query, activeTag]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / 9));
-  const shown = filtered.slice((page - 1) * 9, page * 9);
+  const pageCount = Math.max(1, Math.ceil(total / 9));
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setError("");
+    const timer = window.setTimeout(() => {
+      dataSource.list({ query, category: activeTag, page }).then((result) => {
+        if (active) { setRecipes(result.recipes); setTotal(result.total); }
+      }).catch(() => active && setError("レシピを読み込めませんでした。時間をおいて再度お試しください。"))
+        .finally(() => active && setLoading(false));
+      const params = new URLSearchParams();
+      if (query) params.set("q", query); if (activeTag !== "すべて") params.set("category", activeTag); if (page > 1) params.set("page", String(page));
+      window.history.replaceState(null, "", `${window.location.pathname}${params.size ? `?${params}` : ""}`);
+    }, 200);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [activeTag, dataSource, page, query]);
 
   const loadImage = async (event: ChangeEvent<HTMLInputElement>, onLoad: (url: string) => void) => {
     const file = event.target.files?.[0];
-    if (file) onLoad(await compressImage(file));
+    if (file) try { setImageBusy(true); onLoad(await compressImage(file)); } catch { setError("画像を処理できませんでした。別の画像をお試しください。"); } finally { setImageBusy(false); }
   };
 
-  const save = (event: FormEvent) => {
+  const save = async (event: FormEvent) => {
     event.preventDefault();
     const cleanIngredients = ingredients.filter((item) => item.name.trim());
     const cleanSteps = steps.filter((step) => step.text.trim());
-    setRecipes((current) => [{ id: crypto.randomUUID(), title, description, image, time: "新着", tags: tags.split(/[、,\s]+/).filter(Boolean), ingredients: cleanIngredients, steps: cleanSteps }, ...current]);
-    setTitle(""); setDescription(""); setTags(""); setImage(""); setIngredients([emptyIngredient()]); setSteps([emptyStep()]); setFormOpen(false); setPage(1);
+    setSaving(true); setError("");
+    try {
+      await dataSource.create({ title: title.trim(), description: description.trim(), category, coverImage: image, tags: tags.split(/[、,\s]+/).filter(Boolean), ingredients: cleanIngredients, steps: cleanSteps });
+      setTitle(""); setDescription(""); setTags(""); setImage(""); setIngredients([emptyIngredient()]); setSteps([emptyStep()]); setFormOpen(false); setPage(1);
+      const result = await dataSource.list({ query, category: activeTag, page: 1 }); setRecipes(result.recipes); setTotal(result.total);
+    } catch { setError("レシピを保存できませんでした。入力内容と通信状況をご確認ください。"); }
+    finally { setSaving(false); }
   };
 
   return <>
@@ -101,15 +105,16 @@ export function RecipeApp() {
       </section>
 
       <section className="collection" id="recipes">
-        <div className="section-heading"><div><span className="section-no">01</span><h2>わたしのレシピ</h2></div><p>{filtered.length} RECIPES</p></div>
+        <div className="section-heading"><div><span className="section-no">01</span><h2>わたしのレシピ</h2></div><p>{total} RECIPES</p></div>
         <div className="search-row">
           <label className="search"><span>⌕</span><input value={query} onChange={(e) => { setQuery(e.target.value); setPage(1); }} placeholder="料理名、材料、タグから検索" /></label>
           <div className="filter" id="categories">{filterTags.map((tag) => <button key={tag} className={activeTag === tag ? "selected" : ""} onClick={() => { setActiveTag(tag); setPage(1); }}>{tag}</button>)}</div>
         </div>
 
-        {shown.length ? <div className="recipe-grid">{shown.map((recipe, index) => <article className="recipe-card" key={recipe.id}>
-          <div className="card-image"><Image src={recipe.image} alt={`${recipe.title}の完成写真`} fill sizes="(max-width: 700px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized={recipe.image.startsWith("data:")} /><span className="card-number">{String((page - 1) * 9 + index + 1).padStart(2, "0")}</span><span className="time">◷ {recipe.time}</span></div>
-          <div className="card-body"><div className="tags">{recipe.tags.map((tag) => <button key={tag} onClick={() => { setActiveTag(tag); setPage(1); }}>#{tag}</button>)}</div><h3>{recipe.title}</h3><p>{recipe.description}</p><button className="detail">レシピを見る <span>→</span></button></div>
+        {error && <div className="status error" role="alert">{error}</div>}
+        {loading ? <div className="status" role="status">レシピを読み込んでいます…</div> : recipes.length ? <div className="recipe-grid">{recipes.map((recipe, index) => <article className="recipe-card" key={recipe.id}>
+          <div className="card-image">{recipe.image && <Image src={recipe.image} alt={`${recipe.title}の完成写真`} fill sizes="(max-width: 700px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized={recipe.image.startsWith("data:")} />}<span className="card-number">{String((page - 1) * 9 + index + 1).padStart(2, "0")}</span><span className="time">◷ {recipe.time}</span></div>
+          <div className="card-body"><div className="tags">{recipe.tags.map((tag) => <button key={tag} onClick={() => { setQuery(tag); setPage(1); }}>#{tag}</button>)}</div><h3>{recipe.title}</h3><p>{recipe.description}</p><button className="detail">レシピを見る <span>→</span></button></div>
         </article>)}</div> : <div className="empty"><strong>レシピが見つかりませんでした</strong><p>検索ワードやカテゴリを変えてお試しください。</p></div>}
         {pageCount > 1 && <div className="pagination"><button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>←</button>{Array.from({ length: pageCount }, (_, i) => <button key={i} className={page === i + 1 ? "current" : ""} onClick={() => setPage(i + 1)}>{i + 1}</button>)}<button disabled={page === pageCount} onClick={() => setPage((p) => p + 1)}>→</button></div>}
       </section>
@@ -122,11 +127,13 @@ export function RecipeApp() {
       <form onSubmit={save}>
         <label>レシピ名 <span>必須</span><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：わが家の肉じゃが" /></label>
         <label>ひとことメモ<textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="レシピの特徴や思い出を書いてください" /></label>
+        <label>カテゴリ <span>必須</span><select value={category} onChange={(e) => setCategory(e.target.value)}>{filterTags.slice(1).map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>タグ<input value={tags} onChange={(e) => setTags(e.target.value)} placeholder="和食、作り置き（スペースや読点で区切る）" /></label>
         <fieldset><legend>完成写真 <span>必須</span></legend><label className={`upload ${image ? "has-image" : ""}`}>{image ? <Image src={image} alt="完成写真のプレビュー" fill unoptimized /> : <><b>＋</b><strong>写真を選ぶ</strong><small>自動で約500KB以下に圧縮します</small></>}<input required={!image} type="file" accept="image/*" onChange={(e) => loadImage(e, setImage)} /></label></fieldset>
         <fieldset><div className="field-head"><legend>材料 <small>1人前</small></legend><button type="button" onClick={() => setIngredients((v) => [...v, emptyIngredient()])}>＋ 材料を追加</button></div>{ingredients.map((item, index) => <div className="ingredient-row" key={index}><input required placeholder="材料名" value={item.name} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, name: e.target.value } : x))}/><input required type="number" step="any" placeholder="数量" value={item.amount} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, amount: e.target.value } : x))}/><select value={item.unit} onChange={(e) => setIngredients((v) => v.map((x, i) => i === index ? { ...x, unit: e.target.value } : x))}><option>g</option><option>ml</option><option>個</option><option>本</option><option>枚</option><option>大さじ</option><option>小さじ</option><option>適量</option></select><button type="button" aria-label={`材料${index + 1}を削除`} disabled={ingredients.length === 1} onClick={() => setIngredients((v) => v.filter((_, i) => i !== index))}>−</button></div>)}</fieldset>
         <fieldset><div className="field-head"><legend>作り方</legend><button type="button" onClick={() => setSteps((v) => [...v, emptyStep()])}>＋ 工程を追加</button></div>{steps.map((step, index) => <div className="step-row" key={index}><span>{index + 1}</span><textarea required value={step.text} onChange={(e) => setSteps((v) => v.map((x, i) => i === index ? { ...x, text: e.target.value } : x))} placeholder="工程を入力してください"/><label className="step-photo">{step.image ? "✓ 写真あり" : "▧ 写真"}<input type="file" accept="image/*" onChange={(e) => loadImage(e, (url) => setSteps((v) => v.map((x, i) => i === index ? { ...x, image: url } : x)))}/></label><button type="button" aria-label={`工程${index + 1}を削除`} disabled={steps.length === 1} onClick={() => setSteps((v) => v.filter((_, i) => i !== index))}>−</button></div>)}</fieldset>
-        <div className="form-actions"><button type="button" onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" type="submit">レシピを保存する →</button></div>
+        {imageBusy && <div className="status" role="status">画像を圧縮しています…</div>}
+        <div className="form-actions"><button type="button" disabled={saving} onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" disabled={saving || imageBusy} type="submit">{saving ? "保存中…" : "レシピを保存する →"}</button></div>
       </form>
     </section></div>}
   </>;
