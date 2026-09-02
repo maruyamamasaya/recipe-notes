@@ -1,6 +1,6 @@
 # Development
 
-この文書は、初期化後に人間と AI が同じ手順で開発できるよう、確定した方針と予定する command contract を管理する。**現時点では設計のみで `package.json` 等は未作成**のため、下記コマンドは初期化 PR で実際に実行してから確定する。
+この文書は、人間と AI が同じ手順で開発できるよう、確定した command contract を管理する。
 
 ## Requirements
 
@@ -35,9 +35,9 @@ Next.js 16、Vercel、Supabase CLI の互換性を初期化時に公式情報で
 - public key は秘密ではないが権限ではない。RLS を必須とし、許可範囲を最小化する。
 - server secret を読む module は `server-only` とし、client import graph から隔離する。
 
-## Planned Script Contract
+## Script Contract
 
-初期化 PR で以下の npm scripts を実装・検証する。現時点では未定義なので、まだ実行できない。
+`package.json` では以下の scripts を定義する。
 
 | Command | Responsibility |
 | --- | --- |
@@ -77,6 +77,6 @@ remote DB を直接 dashboard で変更しない。緊急変更も migration に
 - E2E: 初期主要 journey が確定後、Playwright で少数の critical path。
 - Security: owner/non-owner/anonymous/privileged の matrix を policy ごとに検証する。
 
-## Current Verification Status
+## Current Implementation Status
 
-この変更は Markdown の設計更新のみで、application、dependency、script はまだ存在しない。そのため lint、typecheck、test、build は未実施であり、初期化 PR の完了条件とする。
+UI はブラウザ内の状態で動くプロトタイプである。Supabase 接続前のため、ページを再読み込みすると追加したレシピは失われる。永続化を実装する際に migration、RLS、Storage policy と integration test を同じ変更で追加する。
