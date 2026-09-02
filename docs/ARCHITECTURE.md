@@ -74,6 +74,8 @@ route 固有の component、action、test は利用箇所の近くへ置く。`l
 
 ## Data Access Responsibilities
 
+現在の一覧取得と登録は Client Component から `src/lib/recipes/supabase-repository.ts` を介して行う。Anonymous Auth session が browser storage にある暫定構成のためで、正式ログイン時は SSR cookie と Server Component / Server Action へ移す。一覧はDB検索RPCで9件だけ取得し、登録はprivate Storageへ先行uploadした後、`security invoker` RPCの単一DB transactionで保存する。DB失敗時はupload済みobjectを削除する。
+
 | 境界 | 責務 | 禁止／注意 |
 | --- | --- | --- |
 | Browser Client | Auth イベント、Realtime、ブラウザから必要な限定 read/write。公開 URL と publishable key を使用 | service role、任意 SQL、RLS 回避を持たせない。browser access 自体を既定にしない |
