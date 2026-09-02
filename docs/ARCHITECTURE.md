@@ -90,6 +90,7 @@ Supabase SSR の cookie 更新に必要な request proxy/middleware は公式方
 
 ## Authentication / Authorization
 
+- ログインUI導入までの暫定方式としてSupabase Anonymous Sign-Inを正式に利用する。browserへはpublishable keyだけを渡し、匿名利用者もAuth発行JWTの`authenticated` roleとしてowner RLSを適用する。各環境でAnonymous Sign-Insを有効化する必要があり、無効時はUIで設定不足として診断する。service role keyをbrowserへ公開しない。
 - 認証は Supabase Auth を第一選択とし、独自 password 保存を実装しない。初期 provider はプロダクト要件確定まで `TBD`。
 - 認証（誰か）と認可（何を行えるか）を分離する。各所有データは `auth.uid()` と owner column を対応させ、操作別 RLS policy を作る。
 - server でも利用者を検証し、DB でも RLS を強制する多層防御とする。管理者 role が必要かは `TBD`。

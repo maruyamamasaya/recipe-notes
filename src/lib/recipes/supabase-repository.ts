@@ -5,6 +5,35 @@ import type { Recipe, RecipeInput, RecipeRepository } from "./types";
 
 const PAGE_SIZE = 9;
 
+export type RecipeRepositoryErrorCode =
+  | "configuration"
+  | "anonymous-auth-disabled"
+  | "migration-missing"
+  | "permission-denied"
+  | "connection";
+
+export class RecipeRepositoryError extends Error {
+  constructor(public readonly code: RecipeRepositoryErrorCode, message: string, options?: ErrorOptions) {
+    super(message, options);
+    this.name = "RecipeRepositoryError";
+  }
+}
+
+function repositoryError(error: unknown, operation: "auth" | "rpc") {
+  const value = error as { code?: string; message?: string; status?: number } | null;
+  const message = value?.message?.toLowerCase() ?? "";
+  if (operation === "auth" && (message.includes("anonymous") || message.includes("provider is not enabled"))) {
+    return new RecipeRepositoryError("anonymous-auth-disabled", "Anonymous Sign-In が無効です。", { cause: error });
+  }
+  if (value?.code === "PGRST202" || value?.code === "42883" || message.includes("search_recipes")) {
+    return new RecipeRepositoryError("migration-missing", "必要なデータベース構成が見つかりません。", { cause: error });
+  }
+  if (value?.code === "42501" || value?.status === 401 || value?.status === 403 || message.includes("permission denied")) {
+    return new RecipeRepositoryError("permission-denied", "データベースのアクセス設定が不足しています。", { cause: error });
+  }
+  return new RecipeRepositoryError("connection", "Supabase との通信に失敗しました。", { cause: error });
+}
+
 function dataUrlToBlob(value: string) {
   const [header, body] = value.split(",");
   const type = /data:(.*?);base64/.exec(header)?.[1] ?? "image/jpeg";
@@ -16,10 +45,13 @@ export class SupabaseRecipeRepository implements RecipeRepository {
   constructor(private readonly client: SupabaseClient<Database>) {}
 
   private async ensureUser() {
-    const { data: { user } } = await this.client.auth.getUser();
+    const { data: { user }, error: getUserError } = await this.client.auth.getUser();
     if (user) return user;
+    if (getUserError && !["AuthSessionMissingError", "session_not_found"].includes(getUserError.name ?? getUserError.code ?? "")) {
+      throw repositoryError(getUserError, "auth");
+    }
     const { data, error } = await this.client.auth.signInAnonymously();
-    if (error || !data.user) throw new Error("利用者セッションを開始できませんでした。");
+    if (error || !data.user) throw repositoryError(error, "auth");
     return data.user;
   }
 
@@ -29,7 +61,7 @@ export class SupabaseRecipeRepository implements RecipeRepository {
       search_term: query.trim(), category_filter: category === "すべて" ? "" : category,
       page_offset: (page - 1) * PAGE_SIZE, page_limit: PAGE_SIZE,
     });
-    if (error) throw new Error("レシピを読み込めませんでした。");
+    if (error) throw repositoryError(error, "rpc");
     const rows = data ?? [];
     const recipes: Recipe[] = await Promise.all(rows.map(async (row) => ({
       id: row.id, title: row.title, description: row.description, category: row.category,
@@ -75,5 +107,9 @@ export class SupabaseRecipeRepository implements RecipeRepository {
 }
 
 export function createRecipeRepository() {
-  return new SupabaseRecipeRepository(getSupabaseBrowserClient());
+  try {
+    return new SupabaseRecipeRepository(getSupabaseBrowserClient());
+  } catch (error) {
+    throw new RecipeRepositoryError("configuration", "Supabase の接続情報が設定されていません。", { cause: error });
+  }
 }
