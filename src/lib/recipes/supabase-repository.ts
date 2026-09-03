@@ -41,6 +41,13 @@ function dataUrlToBlob(value: string) {
   return new Blob([bytes], { type });
 }
 
+type RecipeRecord = {
+  id: string; title: string; description: string; category: string; image_path: string;
+  created_at: string; tags: string[];
+  ingredients: Array<{ name: string; amount: string | number; unit: string }>;
+  steps: Array<{ description: string; image_path: string | null }>;
+};
+
 export class SupabaseRecipeRepository implements RecipeRepository {
   constructor(private readonly client: SupabaseClient<Database>) {}
 
@@ -70,6 +77,27 @@ export class SupabaseRecipeRepository implements RecipeRepository {
       tags: row.tags ?? [], ingredients: (row.ingredient_names ?? []).map((name) => ({ name, amount: "", unit: "" })), steps: [],
     })));
     return { recipes, total: rows[0]?.total_count ?? 0 };
+  }
+
+  async get(id: string) {
+    await this.ensureUser();
+    const { data, error } = await this.client.rpc("get_recipe", { recipe_id: id });
+    if (error) throw repositoryError(error, "rpc");
+    if (!data) throw new RecipeRepositoryError("connection", "レシピが見つかりません。");
+    const row = data as RecipeRecord;
+    const sign = async (path: string | null) => path
+      ? (await this.client.storage.from("recipe-images").createSignedUrl(path, 3600)).data?.signedUrl ?? ""
+      : "";
+    return {
+      id: row.id, title: row.title, description: row.description, category: row.category,
+      image: await sign(row.image_path), imagePath: row.image_path,
+      time: new Intl.DateTimeFormat("ja-JP", { dateStyle: "long" }).format(new Date(row.created_at)),
+      tags: row.tags ?? [],
+      ingredients: (row.ingredients ?? []).map((item) => ({ ...item, amount: String(item.amount) })),
+      steps: await Promise.all((row.steps ?? []).map(async (step) => ({
+        text: step.description, image: await sign(step.image_path), imagePath: step.image_path ?? undefined,
+      }))),
+    };
   }
 
   async create(input: RecipeInput) {
@@ -103,6 +131,48 @@ export class SupabaseRecipeRepository implements RecipeRepository {
       if (uploadedPaths.length) await this.client.storage.from("recipe-images").remove(uploadedPaths);
       throw error;
     }
+  }
+
+
+  async update(id: string, input: RecipeInput) {
+    const user = await this.ensureUser();
+    const uploadedPaths: string[] = [];
+    const upload = async (path: string, image: string) => {
+      const { error } = await this.client.storage.from("recipe-images").upload(path, dataUrlToBlob(image), { contentType: "image/jpeg", upsert: false });
+      if (error) throw new Error("画像をアップロードできませんでした。");
+      uploadedPaths.push(path);
+      return path;
+    };
+    try {
+      const base = `${user.id}/recipes/${id}`;
+      const coverPath = input.coverImage.startsWith("data:")
+        ? await upload(`${base}/cover-${crypto.randomUUID()}.jpg`, input.coverImage)
+        : input.imagePath;
+      if (!coverPath) throw new Error("完成写真が見つかりません。");
+      const steps = [];
+      for (const step of input.steps) {
+        const imagePath = step.image?.startsWith("data:")
+          ? await upload(`${base}/steps/${crypto.randomUUID()}.jpg`, step.image)
+          : step.imagePath ?? null;
+        steps.push({ description: step.text, image_path: imagePath });
+      }
+      const payload: Json = { title: input.title, description: input.description, category: input.category,
+        image_path: coverPath, servings: 1, ingredients: input.ingredients, steps, tags: input.tags };
+      const { data: obsoletePaths, error } = await this.client.rpc("update_recipe", { recipe_id: id, payload });
+      if (error) throw repositoryError(error, "rpc");
+      const oldPaths = Array.isArray(obsoletePaths) ? obsoletePaths.filter((path): path is string => typeof path === "string") : [];
+      if (oldPaths.length) await this.client.storage.from("recipe-images").remove(oldPaths);
+    } catch (error) {
+      if (uploadedPaths.length) await this.client.storage.from("recipe-images").remove(uploadedPaths);
+      throw error;
+    }
+  }
+
+  async delete(id: string) {
+    await this.ensureUser();
+    const { data, error } = await this.client.rpc("delete_recipe", { recipe_id: id });
+    if (error) throw repositoryError(error, "rpc");
+    if (data?.length) await this.client.storage.from("recipe-images").remove(data);
   }
 }
 
