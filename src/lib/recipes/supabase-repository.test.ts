@@ -21,7 +21,7 @@ describe("SupabaseRecipeRepository", () => {
       },
     };
     const repository = new SupabaseRecipeRepository(client as never);
-    await expect(repository.list({ query: "", category: "すべて", page: 1 })).rejects.toMatchObject<Partial<RecipeRepositoryError>>({ code: "anonymous-auth-disabled" });
+    await expect(repository.list({ query: "", category: "すべて", page: 1 })).rejects.toMatchObject({ code: "anonymous-auth-disabled" } satisfies Partial<RecipeRepositoryError>);
   });
 
   it("diagnoses a missing search RPC", async () => {
@@ -30,6 +30,6 @@ describe("SupabaseRecipeRepository", () => {
       rpc: vi.fn().mockResolvedValue({ data: null, error: { code: "PGRST202", message: "function was not found" } }),
     };
     const repository = new SupabaseRecipeRepository(client as never);
-    await expect(repository.list({ query: "", category: "すべて", page: 1 })).rejects.toMatchObject<Partial<RecipeRepositoryError>>({ code: "migration-missing" });
+    await expect(repository.list({ query: "", category: "すべて", page: 1 })).rejects.toMatchObject({ code: "migration-missing" } satisfies Partial<RecipeRepositoryError>);
   });
 });

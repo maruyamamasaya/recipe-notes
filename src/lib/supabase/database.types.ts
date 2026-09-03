@@ -6,6 +6,9 @@ export type Database = {
     Views: Record<string, never>;
     Functions: {
       create_recipe: { Args: { payload: Json }; Returns: string };
+      get_recipe: { Args: { recipe_id: string }; Returns: Json };
+      update_recipe: { Args: { recipe_id: string; payload: Json }; Returns: string[] };
+      delete_recipe: { Args: { recipe_id: string }; Returns: string[] };
       search_recipes: {
         Args: { search_term: string; category_filter: string; page_offset: number; page_limit: number };
         Returns: Array<{

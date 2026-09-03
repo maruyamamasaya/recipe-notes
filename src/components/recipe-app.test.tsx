@@ -1,6 +1,6 @@
 import "@testing-library/jest-dom/vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RecipeApp } from "./recipe-app";
 import type { RecipeRepository } from "@/lib/recipes/types";
 
@@ -13,8 +13,14 @@ const repository: RecipeRepository = {
     const filtered = recipes.filter((recipe) => [recipe.title, recipe.description, ...recipe.tags, ...recipe.ingredients.map((item) => item.name)].join(" ").includes(query) && (category === "すべて" || recipe.category === category));
     return { recipes: filtered.slice((page - 1) * 9, page * 9), total: filtered.length };
   }),
+  get: vi.fn(async (id: string) => recipes.find((recipe) => recipe.id === id)!),
   create: vi.fn(async () => undefined),
+  update: vi.fn(async () => undefined),
+  delete: vi.fn(async () => undefined),
 };
+
+afterEach(() => cleanup());
+Object.defineProperty(window, "scrollTo", { value: vi.fn(), writable: true });
 
 describe("RecipeApp", () => {
   it("filters recipes by ingredient", async () => {
@@ -45,8 +51,17 @@ describe("RecipeApp", () => {
     const list = vi.fn()
       .mockRejectedValueOnce(new Error("offline"))
       .mockResolvedValueOnce({ recipes: [], total: 0 });
-    render(<RecipeApp repository={{ list, create: vi.fn() }} />);
+    render(<RecipeApp repository={{ list, get: vi.fn(), create: vi.fn(), update: vi.fn(), delete: vi.fn() }} />);
     fireEvent.click(await screen.findByRole("button", { name: "再読み込み" }));
     await waitFor(() => expect(list).toHaveBeenCalledTimes(2));
+  });
+
+  it("opens a recipe detail and returns home", async () => {
+    render(<RecipeApp repository={repository} />);
+    fireEvent.click((await screen.findAllByRole("button", { name: /レシピを見る/ }))[0]);
+    expect(await screen.findByRole("heading", { name: "材料" })).toBeInTheDocument();
+    expect(screen.getByText("サーモン")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "← 戻る" }));
+    expect(await screen.findByRole("heading", { name: "わたしのレシピ" })).toBeInTheDocument();
   });
 });

@@ -57,7 +57,7 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const dataSource = useMemo<RecipeRepository>(() => {
     if (repository) return repository;
     try { return createRecipeRepository(); }
-    catch (error) { return { list: async () => { throw error; }, create: async () => { throw error; } }; }
+    catch (error) { return { list: async () => { throw error; }, get: async () => { throw error; }, create: async () => { throw error; }, update: async () => { throw error; }, delete: async () => { throw error; } }; }
   }, [repository]);
   const [recipes, setRecipes] = useState<Recipe[]>([]);
   const [total, setTotal] = useState(0);
@@ -65,13 +65,18 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const [activeTag, setActiveTag] = useState("すべて");
   const [page, setPage] = useState(1);
   const [formOpen, setFormOpen] = useState(false);
+  const [selectedRecipe, setSelectedRecipe] = useState<Recipe | null>(null);
+  const [detailLoading, setDetailLoading] = useState(false);
+  const [detailError, setDetailError] = useState("");
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [deletingRecipe, setDeletingRecipe] = useState(false);
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [category, setCategory] = useState("主菜");
   const [tags, setTags] = useState("");
   const [image, setImage] = useState("");
   const [ingredients, setIngredients] = useState([emptyIngredient()]);
-  const [steps, setSteps] = useState([emptyStep()]);
+  const [steps, setSteps] = useState<Recipe["steps"]>([emptyStep()]);
   const [loadingRecipes, setLoadingRecipes] = useState(true);
   const [savingRecipe, setSavingRecipe] = useState(false);
   const [processingImage, setProcessingImage] = useState(false);
@@ -82,6 +87,37 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const imageOperation = useRef(0);
   const filterTags = ["すべて", "朝ごはん", "主菜", "パスタ", "ごはん", "野菜", "おやつ"];
   const pageCount = Math.max(1, Math.ceil(total / 9));
+
+  const resetForm = () => {
+    setTitle(""); setDescription(""); setCategory("主菜"); setTags(""); setImage("");
+    setIngredients([emptyIngredient()]); setSteps([emptyStep()]); setEditingId(null);
+    setFormError(""); setImageError("");
+  };
+
+  const openNewRecipe = () => { resetForm(); setFormOpen(true); };
+
+  const openDetail = async (recipe: Recipe) => {
+    setSelectedRecipe(recipe); setDetailLoading(true); setDetailError("");
+    window.history.pushState({ recipeId: recipe.id }, "", `?recipe=${recipe.id}`);
+    try { setSelectedRecipe(await dataSource.get(recipe.id)); }
+    catch (error) { setDetailError(loadErrorMessage(error)); }
+    finally { setDetailLoading(false); }
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const closeDetail = () => {
+    setSelectedRecipe(null); setDetailError("");
+    window.history.pushState(null, "", window.location.pathname);
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
+  const editRecipe = () => {
+    if (!selectedRecipe) return;
+    setEditingId(selectedRecipe.id); setTitle(selectedRecipe.title); setDescription(selectedRecipe.description);
+    setCategory(selectedRecipe.category); setTags(selectedRecipe.tags.join("、")); setImage(selectedRecipe.image);
+    setIngredients(selectedRecipe.ingredients.length ? selectedRecipe.ingredients : [emptyIngredient()]);
+    setSteps(selectedRecipe.steps.length ? selectedRecipe.steps : [emptyStep()]); setFormError(""); setImageError(""); setFormOpen(true);
+  };
 
   useEffect(() => {
     let active = true;
@@ -131,7 +167,7 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
   const hasIngredients = ingredients.some((item) => item.name.trim() && item.amount !== "");
   const hasSteps = steps.some((step) => step.text.trim());
   const canSubmit = !savingRecipe && !processingImage && title.trim() !== "" && image !== "" && hasIngredients && hasSteps;
-  const submitHint = processingImage ? "画像処理の完了後に保存できます。" : !title.trim() ? "レシピ名を入力してください。" : !image ? "完成写真を選択してください。" : !hasIngredients ? "材料を入力してください。" : !hasSteps ? "作り方を入力してください。" : "";
+  const submitHint = processingImage ? "画像処理の完了後に保存できます。" : !image ? "完成写真を選択してください。" : !title.trim() ? "レシピ名を入力してください。" : !hasIngredients ? "材料を入力してください。" : !hasSteps ? "作り方を入力してください。" : "";
 
   const save = async (event: FormEvent) => {
     event.preventDefault();
@@ -140,8 +176,12 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
     const cleanSteps = steps.filter((step) => step.text.trim());
     setSavingRecipe(true); setFormError("");
     try {
-      await dataSource.create({ title: title.trim(), description: description.trim(), category, coverImage: image, tags: tags.split(/[、,\s]+/).filter(Boolean), ingredients: cleanIngredients, steps: cleanSteps });
-      setTitle(""); setDescription(""); setTags(""); setImage(""); setIngredients([emptyIngredient()]); setSteps([emptyStep()]); setFormOpen(false); setPage(1);
+      const input = { title: title.trim(), description: description.trim(), category, coverImage: image, imagePath: selectedRecipe?.imagePath, tags: tags.split(/[、,\s]+/).filter(Boolean), ingredients: cleanIngredients, steps: cleanSteps };
+      if (editingId) {
+        await dataSource.update(editingId, input);
+        setSelectedRecipe(await dataSource.get(editingId));
+      } else await dataSource.create(input);
+      resetForm(); setFormOpen(false); setPage(1);
       try {
         const result = await dataSource.list({ query, category: activeTag, page: 1 });
         setRecipes(result.recipes); setTotal(result.total); setLoadError("");
@@ -155,14 +195,31 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
     } finally { setSavingRecipe(false); }
   };
 
+  const removeRecipe = async () => {
+    if (!selectedRecipe || !window.confirm(`「${selectedRecipe.title}」を削除しますか？\nこの操作は取り消せません。`)) return;
+    setDeletingRecipe(true); setDetailError("");
+    try { await dataSource.delete(selectedRecipe.id); closeDetail(); setReloadKey((value) => value + 1); }
+    catch (error) { setDetailError(error instanceof Error ? "レシピを削除できませんでした。通信状況をご確認ください。" : loadErrorMessage(error)); }
+    finally { setDeletingRecipe(false); }
+  };
+
   return <>
     <header className="site-header">
-      <a className="brand" href="#top" aria-label="Kitchen Note ホーム"><span className="brand-mark">KITCHEN</span><span>NOTE</span></a>
-      <nav aria-label="メインナビゲーション"><a className="active" href="#recipes">レシピ</a><a href="#categories">カテゴリ</a><a href="#about">このアプリについて</a></nav>
-      <button className="new-button" onClick={() => setFormOpen(true)}><span>＋</span> 新しいレシピ</button>
+      <button className="brand brand-button" onClick={closeDetail} aria-label="Kitchen Note ホーム"><span className="brand-mark">KITCHEN</span><span>NOTE</span></button>
+      <nav aria-label="メインナビゲーション"><button className="nav-home" onClick={closeDetail}>ホーム</button><a className="active" href="#recipes" onClick={() => selectedRecipe && closeDetail()}>レシピ</a><a href="#categories">カテゴリ</a><a href="#about">このアプリについて</a></nav>
+      <button className="new-button" onClick={openNewRecipe}><span>＋</span> 新しいレシピ</button>
     </header>
 
-    <main id="top">
+    {selectedRecipe ? <main id="top" className="recipe-detail-page">
+      <div className="detail-toolbar"><button onClick={closeDetail}>← 戻る</button><button onClick={closeDetail}>⌂ ホーム</button></div>
+      {detailError && <div className="status error" role="alert">{detailError}</div>}
+      <article className="recipe-detail-view">
+        <div className="detail-visual">{selectedRecipe.image && <Image src={selectedRecipe.image} alt={`${selectedRecipe.title}の完成写真`} fill priority sizes="(max-width: 800px) 100vw, 50vw" unoptimized={selectedRecipe.image.startsWith("data:")} />}</div>
+        <div className="detail-intro"><div className="eyebrow">MY RECIPE / {selectedRecipe.category}</div><h1>{selectedRecipe.title}</h1><p className="detail-description">{selectedRecipe.description || "大切なレシピの記録。"}</p><div className="detail-meta"><span>登録日 {selectedRecipe.time}</span><span>1人前</span></div><div className="detail-tags">{selectedRecipe.tags.map((tag) => <span key={tag}>#{tag}</span>)}</div><div className="detail-actions"><button className="edit-action" onClick={editRecipe} disabled={detailLoading}>✎ 編集する</button><button className="delete-action" onClick={removeRecipe} disabled={deletingRecipe}>{deletingRecipe ? "削除中…" : "削除する"}</button></div></div>
+        <section className="detail-section ingredients-panel"><div className="detail-section-title"><span>01</span><div><small>INGREDIENTS</small><h2>材料</h2></div><b>1人前</b></div><ul>{selectedRecipe.ingredients.map((item, index) => <li key={`${item.name}-${index}`}><span>{item.name}</span><strong>{item.amount} {item.unit}</strong></li>)}</ul></section>
+        <section className="detail-section steps-panel"><div className="detail-section-title"><span>02</span><div><small>METHOD</small><h2>作り方</h2></div></div><ol>{selectedRecipe.steps.map((step, index) => <li key={index}><span className="step-number">{String(index + 1).padStart(2, "0")}</span><p>{step.text}</p>{step.image && <div className="detail-step-image"><Image src={step.image} alt={`工程${index + 1}の写真`} fill sizes="240px" unoptimized={step.image.startsWith("data:")} /></div>}</li>)}</ol></section>
+      </article>
+    </main> : <main id="top">
       <section className="hero">
         <div className="eyebrow">MY RECIPE COLLECTION</div>
         <h1>お気に入りの味を、<br/><em>ずっと手元に。</em></h1>
@@ -180,16 +237,16 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
         {loadError && <div className="status error" role="alert"><p>{loadError}</p><button type="button" onClick={() => setReloadKey((value) => value + 1)}>再読み込み</button></div>}
         {loadingRecipes ? <div className="status" role="status">レシピを読み込んでいます…</div> : recipes.length ? <div className="recipe-grid">{recipes.map((recipe, index) => <article className="recipe-card" key={recipe.id}>
           <div className="card-image">{recipe.image && <Image src={recipe.image} alt={`${recipe.title}の完成写真`} fill sizes="(max-width: 700px) 100vw, (max-width: 1050px) 50vw, 33vw" unoptimized={recipe.image.startsWith("data:")} />}<span className="card-number">{String((page - 1) * 9 + index + 1).padStart(2, "0")}</span><span className="time">◷ {recipe.time}</span></div>
-          <div className="card-body"><div className="tags">{recipe.tags.map((tag) => <button key={tag} onClick={() => { setQuery(tag); setPage(1); }}>#{tag}</button>)}</div><h3>{recipe.title}</h3><p>{recipe.description}</p><button className="detail">レシピを見る <span>→</span></button></div>
+          <div className="card-body"><div className="tags">{recipe.tags.map((tag) => <button key={tag} onClick={() => { setQuery(tag); setPage(1); }}>#{tag}</button>)}</div><h3>{recipe.title}</h3><p>{recipe.description}</p><button className="detail" onClick={() => openDetail(recipe)}>レシピを見る <span>→</span></button></div>
         </article>)}</div> : <div className="empty"><strong>レシピが見つかりませんでした</strong><p>検索ワードやカテゴリを変えてお試しください。</p></div>}
         {pageCount > 1 && <div className="pagination"><button disabled={page === 1} onClick={() => setPage((p) => p - 1)}>←</button>{Array.from({ length: pageCount }, (_, i) => <button key={i} className={page === i + 1 ? "current" : ""} onClick={() => setPage(i + 1)}>{i + 1}</button>)}<button disabled={page === pageCount} onClick={() => setPage((p) => p + 1)}>→</button></div>}
       </section>
-    </main>
+    </main>}
 
     <footer id="about"><div className="brand footer-brand"><span className="brand-mark">KITCHEN</span><span>NOTE</span></div><p>毎日の「おいしい」を、記憶に。</p><small>© 2026 KITCHEN NOTE</small></footer>
 
     {formOpen && <div className="modal-backdrop" onMouseDown={(e) => e.target === e.currentTarget && setFormOpen(false)}><section className="modal" role="dialog" aria-modal="true" aria-labelledby="form-title">
-      <div className="modal-head"><div><span className="eyebrow">NEW RECIPE</span><h2 id="form-title">新しいレシピ</h2></div><button className="close" type="button" onClick={() => setFormOpen(false)} aria-label="閉じる">×</button></div>
+      <div className="modal-head"><div><span className="eyebrow">{editingId ? "EDIT RECIPE" : "NEW RECIPE"}</span><h2 id="form-title">{editingId ? "レシピを編集" : "新しいレシピ"}</h2></div><button className="close" type="button" onClick={() => setFormOpen(false)} aria-label="閉じる">×</button></div>
       <form onSubmit={save}>
         <label>レシピ名 <span>必須</span><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="例：わが家の肉じゃが" /></label>
         <label>ひとことメモ<textarea value={description} onChange={(e) => setDescription(e.target.value)} placeholder="レシピの特徴や思い出を書いてください" /></label>
@@ -202,7 +259,7 @@ export function RecipeApp({ repository }: { repository?: RecipeRepository }) {
         {imageError && <div className="status error" role="alert">画像エラー: {imageError}</div>}
         {formError && <div className="status error" role="alert">保存エラー: {formError}</div>}
         {submitHint && !imageError && <p className="submit-hint">{submitHint}</p>}
-        <div className="form-actions"><button type="button" disabled={savingRecipe} onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" disabled={!canSubmit} type="submit">{savingRecipe ? "保存中…" : processingImage ? "画像を処理中…" : "レシピを保存する →"}</button></div>
+        <div className="form-actions"><button type="button" disabled={savingRecipe} onClick={() => setFormOpen(false)}>キャンセル</button><button className="save" disabled={!canSubmit} type="submit">{savingRecipe ? "保存中…" : processingImage ? "画像を処理中…" : editingId ? "変更を保存する →" : "レシピを保存する →"}</button></div>
       </form>
     </section></div>}
   </>;
